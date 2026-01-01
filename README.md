@@ -2,6 +2,13 @@
 
 A lightweight, production-ready REST API for downloading TikTok videos without watermarks. Built with Express.js, TypeScript, and yt-dlp. Includes an optional web interface for convenience.
 
+## Live Demo
+
+**🌐 Live API**: [https://tiktok-downloader-production-635b.up.railway.app](https://tiktok-downloader-production-635b.up.railway.app)
+
+- **Frontend**: [https://tiktok-downloader-production-635b.up.railway.app/web](https://tiktok-downloader-production-635b.up.railway.app/web)
+- **API Health**: [https://tiktok-downloader-production-635b.up.railway.app/health](https://tiktok-downloader-production-635b.up.railway.app/health)
+
 <div align="center">
   <table>
     <tr>
@@ -236,19 +243,29 @@ curl http://localhost:3000/health
 
 ### Railway
 
-This project is pre-configured for Railway deployment:
+This project is pre-configured for Railway deployment using Docker:
 
 1. Push your code to GitHub
 2. Create a new project on [Railway](https://railway.app)
 3. Connect your GitHub repository
-4. Railway will automatically detect the configuration and deploy
+4. Railway will automatically detect the `Dockerfile` and deploy
 
-The `nixpacks.toml` file ensures:
+The `Dockerfile` ensures:
 
 - Node.js 20 is installed
-- Python 3 and ffmpeg are available
-- yt-dlp is installed during build
-- The app is built and started correctly
+- Python 3, pip, and ffmpeg are available
+- yt-dlp is installed via pip
+- Frontend and backend are built in multi-stage build
+- Production-ready optimized image
+
+**Getting your Railway URL:**
+
+1. Go to your Railway project dashboard
+2. Click on your service
+3. Go to **Settings** → **Networking**
+4. Click **Generate Domain** to get your public URL
+
+**Live Deployment**: [https://tiktok-downloader-production-635b.up.railway.app](https://tiktok-downloader-production-635b.up.railway.app)
 
 ### Environment Variables
 
@@ -267,9 +284,10 @@ tiktok-downloader/
 ├── dist-frontend/        # Static frontend build output
 ├── package.json          # Dependencies and scripts
 ├── tsconfig.json         # TypeScript configuration
-├── railway.json          # Railway deployment config
-├── nixpacks.toml         # Railway build config
-└── README.md             # This file
+├── Dockerfile            # Docker build configuration
+├── docker-compose.yml     # Local Docker testing
+├── railway.json           # Railway deployment config
+└── README.md              # This file
 ```
 
 ## Development
