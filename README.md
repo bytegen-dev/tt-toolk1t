@@ -6,9 +6,10 @@ A lightweight, production-ready REST API for downloading TikTok videos without w
 
 ## Features
 
-- **REST API** - Simple GET endpoint for downloading TikTok videos
+- **REST API** - Simple GET endpoints for downloading TikTok videos
 - **No watermark** - Downloads clean videos directly
 - **Streaming** - Efficiently streams videos without saving to disk
+- **User posts** - Get all videos from a TikTok user profile
 - **Range requests** - Supports video seeking and partial content
 - **Video metadata** - Get thumbnail, title, and uploader info
 - **Rate limiting** - 5 requests per minute per IP
@@ -147,6 +148,46 @@ curl "http://localhost:3000/metadata?url=https://www.tiktok.com/@username/video/
   "thumbnail": "https://...",
   "duration": 30,
   "uploader": "username"
+}
+```
+
+### Get User Posts
+
+**GET** `/user-posts?username=<username>` or `/user-posts?profile=<profile_url>`
+
+Returns a list of all public videos from a TikTok user profile.
+
+**Query Parameters:**
+
+- `username` (optional) - TikTok username (without @)
+- `profile` (optional) - Full TikTok profile URL
+
+**Example:**
+
+```bash
+curl "http://localhost:3000/user-posts?username=example"
+# or
+curl "http://localhost:3000/user-posts?profile=https://www.tiktok.com/@example"
+```
+
+**Response:**
+
+```json
+{
+  "profile": "https://www.tiktok.com/@example",
+  "count": 10,
+  "posts": [
+    {
+      "id": "1234567890",
+      "url": "https://www.tiktok.com/@example/video/1234567890",
+      "title": "Video Title",
+      "thumbnail": "https://...",
+      "duration": 30,
+      "uploader": "example",
+      "view_count": 1000000,
+      "like_count": 50000
+    }
+  ]
 }
 ```
 

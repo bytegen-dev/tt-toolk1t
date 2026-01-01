@@ -251,6 +251,94 @@ app.get('/metadata', rateLimiter, async (req: Request, res: Response) => {
   }
 });
 
+// Get user posts (all videos from a TikTok profile)
+app.get('/user-posts', rateLimiter, async (req: Request, res: Response) => {
+  try {
+    const username = req.query.username as string;
+    const profile = req.query.profile as string;
+    
+    let profileUrl: string;
+    
+    if (profile) {
+      // If profile URL is provided
+      if (!profile.includes('tiktok.com')) {
+        return res.status(400).json({
+          error: 'Invalid profile URL',
+          message: 'Please provide a valid TikTok profile URL'
+        });
+      }
+      profileUrl = profile.startsWith('http') ? profile : `https://${profile}`;
+    } else if (username) {
+      // Check if username is actually a URL
+      if (username.startsWith('http://') || username.startsWith('https://')) {
+        // Extract username from URL
+        const urlMatch = username.match(/tiktok\.com\/@?([^\/\?]+)/);
+        if (urlMatch && urlMatch[1]) {
+          const extractedUsername = urlMatch[1];
+          profileUrl = `https://www.tiktok.com/@${extractedUsername}`;
+        } else {
+          // Use as profile URL directly
+          profileUrl = username.startsWith('http') ? username : `https://${username}`;
+        }
+      } else {
+        // It's just a username
+        profileUrl = `https://www.tiktok.com/@${username.replace('@', '')}`;
+      }
+    } else {
+      return res.status(400).json({
+        error: 'Missing parameter',
+        message: 'Please provide either ?username=<username> or ?profile=<profile_url>'
+      });
+    }
+    
+    try {
+      // Use yt-dlp to get flat playlist as JSON (metadata without downloading)
+      const command = `yt-dlp --flat-playlist -j --no-warnings "${profileUrl}"`;
+      const { stdout, stderr } = await execAsync(command, { maxBuffer: 10 * 1024 * 1024 }); // 10MB buffer
+      
+      if (stderr && !stderr.includes('WARNING')) {
+        throw new Error(`yt-dlp error: ${stderr}`);
+      }
+      
+      // Parse JSON lines (yt-dlp outputs one JSON object per line)
+      const lines = stdout.trim().split('\n').filter(line => line.trim());
+      const posts = lines.map(line => {
+        try {
+          const video = JSON.parse(line);
+          return {
+            id: video.id || null,
+            url: video.url || `https://www.tiktok.com/@${video.uploader_id || username}/video/${video.id}`,
+            title: video.title || null,
+            thumbnail: video.thumbnail || null,
+            duration: video.duration || null,
+            uploader: video.uploader || video.uploader_id || null,
+            view_count: video.view_count || null,
+            like_count: video.like_count || null,
+          };
+        } catch {
+          return null;
+        }
+      }).filter(post => post !== null);
+      
+      res.json({
+        profile: profileUrl,
+        count: posts.length,
+        posts: posts
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        error: 'Failed to fetch user posts',
+        message: error.message || 'Failed to extract user posts. The profile might be private or unavailable.'
+      });
+    }
+  } catch (error: any) {
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: error.message || 'An unexpected error occurred'
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -290,6 +378,8 @@ app.listen(PORT, () => {
   console.log(`TikTok Downloader API running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Download endpoint: http://localhost:${PORT}/download?url=<tiktok_url>`);
+  console.log(`Metadata endpoint: http://localhost:${PORT}/metadata?url=<tiktok_url>`);
+  console.log(`User posts endpoint: http://localhost:${PORT}/user-posts?username=<username>`);
   console.log(`Frontend: http://localhost:${PORT}/web`);
 });
 
