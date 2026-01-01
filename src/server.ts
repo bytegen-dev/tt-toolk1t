@@ -2,6 +2,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
+import fs from 'fs';
+import tmp from 'tmp';
 
 const execAsync = promisify(exec);
 const app = express();
@@ -339,6 +341,135 @@ app.get('/user-posts', rateLimiter, async (req: Request, res: Response) => {
   }
 });
 
+// Transcribe video audio endpoint
+app.get('/transcribe', rateLimiter, async (req: Request, res: Response) => {
+  try {
+    const url = req.query.url as string;
+    const modelSize = (req.query.model as string) || 'base'; // tiny, base, small, medium, large
+    
+    if (!url) {
+      return res.status(400).json({
+        error: 'Missing URL parameter',
+        message: 'Please provide a TikTok video URL in the query parameter: ?url=<tiktok_url>'
+      });
+    }
+    
+    if (!isValidTikTokUrl(url)) {
+      return res.status(400).json({
+        error: 'Invalid TikTok URL',
+        message: 'Please provide a valid TikTok video URL'
+      });
+    }
+    
+    // Validate model size
+    const validModels = ['tiny', 'base', 'small', 'medium', 'large'];
+    if (!validModels.includes(modelSize)) {
+      return res.status(400).json({
+        error: 'Invalid model size',
+        message: `Model size must be one of: ${validModels.join(', ')}`
+      });
+    }
+    
+    // Create temp file for video (with unique name to avoid conflicts)
+    const tmpFile = tmp.fileSync({ postfix: '.mp4', keep: false });
+    const videoPath = tmpFile.name;
+    
+    // Ensure the file doesn't exist before download
+    if (fs.existsSync(videoPath)) {
+      fs.unlinkSync(videoPath);
+    }
+    
+    try {
+      // Download video using yt-dlp
+      // Use --no-mtime to avoid timestamp issues, and ensure we get the best quality
+      // Use --no-part to avoid partial downloads
+      const downloadCommand = `yt-dlp -f "best[ext=mp4]/best" --no-warnings --no-playlist --no-mtime --no-part -o "${videoPath}" "${url}"`;
+      
+      try {
+        const { stdout, stderr } = await execAsync(downloadCommand, { 
+          timeout: 120000, // 120 second timeout for longer videos
+          maxBuffer: 10 * 1024 * 1024 // 10MB buffer for output
+        });
+        
+        if (stderr && !stderr.includes('WARNING')) {
+          console.error('yt-dlp stderr:', stderr);
+        }
+        console.log('yt-dlp stdout:', stdout);
+      } catch (downloadError: any) {
+        console.error('yt-dlp download error:', downloadError.message);
+        if (downloadError.stderr) {
+          console.error('yt-dlp stderr:', downloadError.stderr);
+        }
+        throw new Error(`Video download failed: ${downloadError.message}`);
+      }
+      
+      // Wait a bit for file system to sync
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Check if file was downloaded
+      if (!fs.existsSync(videoPath)) {
+        throw new Error('Video file was not created');
+      }
+      
+      const fileSize = fs.statSync(videoPath).size;
+      if (fileSize === 0) {
+        throw new Error('Downloaded video file is empty');
+      }
+      
+      console.log(`Video downloaded successfully: ${fileSize} bytes`);
+      
+      // Call Python transcription script
+      // __dirname in compiled JS is dist/, so go up one level to find scripts/
+      const scriptPath = path.resolve(__dirname, '../scripts/transcribe.py');
+      const transcribeCommand = `python3 "${scriptPath}" "${videoPath}" "${modelSize}"`;
+      const { stdout, stderr } = await execAsync(transcribeCommand, { maxBuffer: 10 * 1024 * 1024 });
+      
+      if (stderr && !stderr.includes('WARNING')) {
+        console.error('Transcription stderr:', stderr);
+      }
+      
+      // Parse JSON response from Python script
+      const result = JSON.parse(stdout);
+      
+      if (result.error) {
+        return res.status(500).json({
+          error: 'Transcription failed',
+          message: result.error
+        });
+      }
+      
+      res.json({
+        url: url,
+        transcript: result.transcript,
+        language: result.language,
+        language_probability: result.language_probability,
+        duration: result.duration,
+        model: modelSize
+      });
+      
+    } catch (error: any) {
+      return res.status(500).json({
+        error: 'Transcription failed',
+        message: error.message || 'Failed to transcribe video audio'
+      });
+    } finally {
+      // Clean up temp file
+      try {
+        if (fs.existsSync(videoPath)) {
+          fs.unlinkSync(videoPath);
+        }
+      } catch (cleanupError) {
+        console.error('Failed to cleanup temp file:', cleanupError);
+      }
+    }
+  } catch (error: any) {
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: error.message || 'An unexpected error occurred'
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -380,6 +511,7 @@ app.listen(PORT, () => {
   console.log(`Download endpoint: http://localhost:${PORT}/download?url=<tiktok_url>`);
   console.log(`Metadata endpoint: http://localhost:${PORT}/metadata?url=<tiktok_url>`);
   console.log(`User posts endpoint: http://localhost:${PORT}/user-posts?username=<username>`);
+  console.log(`Transcribe endpoint: http://localhost:${PORT}/transcribe?url=<tiktok_url>&model=<model_size>`);
   console.log(`Frontend: http://localhost:${PORT}/web`);
 });
 

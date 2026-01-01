@@ -25,9 +25,10 @@ FROM node:20-alpine
 # Install Python, pip, ffmpeg, and other essentials
 RUN apk add --no-cache python3 py3-pip ffmpeg
 
-# Install yt-dlp via pip (latest version)
+# Install yt-dlp and transcription dependencies via pip
 # Using --break-system-packages is safe in a container environment
-RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
+RUN pip3 install --no-cache-dir --break-system-packages yt-dlp && \
+    pip3 install --no-cache-dir --break-system-packages faster-whisper
 
 WORKDIR /app
 
@@ -42,6 +43,10 @@ COPY --from=backend-builder /app/dist ./dist
 
 # Copy built frontend from builder (frontend builds to ../dist-frontend relative to frontend dir)
 COPY --from=frontend-builder /app/dist-frontend ./dist-frontend
+
+# Copy transcription script
+COPY scripts/transcribe.py ./scripts/transcribe.py
+RUN chmod +x ./scripts/transcribe.py
 
 # Expose port (Railway uses $PORT)
 EXPOSE 3000
