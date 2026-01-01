@@ -4,7 +4,11 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ .
+# Temporarily override distDir to build locally (Turbopack doesn't allow ../ paths)
+RUN sed -i "s|distDir: '../dist-frontend'|distDir: 'out'|g" next.config.ts
 RUN npm run build
+# Copy build output to the expected location (/app/dist-frontend)
+RUN mkdir -p /app/dist-frontend && cp -r out/* /app/dist-frontend/
 
 # Stage 2: Build backend
 FROM node:20-alpine AS backend-builder
@@ -22,7 +26,8 @@ FROM node:20-alpine
 RUN apk add --no-cache python3 py3-pip ffmpeg
 
 # Install yt-dlp via pip (latest version)
-RUN pip3 install --no-cache-dir yt-dlp
+# Using --break-system-packages is safe in a container environment
+RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 WORKDIR /app
 
