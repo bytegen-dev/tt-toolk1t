@@ -1,8 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import https from 'https';
-import http from 'http';
 
 const execAsync = promisify(exec);
 const app = express();
@@ -55,10 +53,24 @@ setInterval(() => {
 const isValidTikTokUrl = (url: string): boolean => {
   try {
     const parsed = new URL(url);
-    return (
-      (parsed.hostname === 'www.tiktok.com' || parsed.hostname === 'tiktok.com' || parsed.hostname === 'vm.tiktok.com') &&
-      (parsed.pathname.includes('/video/') || parsed.pathname.includes('/@'))
-    );
+    const validHostnames = [
+      'www.tiktok.com',
+      'tiktok.com',
+      'vm.tiktok.com',
+      'vt.tiktok.com'
+    ];
+    
+    if (!validHostnames.includes(parsed.hostname)) {
+      return false;
+    }
+    
+    // For short URLs (vt.tiktok.com, vm.tiktok.com), just check hostname
+    if (parsed.hostname === 'vt.tiktok.com' || parsed.hostname === 'vm.tiktok.com') {
+      return parsed.pathname.length > 1; // Must have a path
+    }
+    
+    // For full URLs, check for video path or @username
+    return parsed.pathname.includes('/video/') || parsed.pathname.includes('/@');
   } catch {
     return false;
   }
@@ -86,95 +98,60 @@ const getRandomUserAgent = (): string => {
   return userAgents[Math.floor(Math.random() * userAgents.length)];
 };
 
-// Extract direct video URL using yt-dlp
-const extractVideoUrl = async (tiktokUrl: string): Promise<string> => {
-  try {
-    // Use yt-dlp to get the direct video URL (no watermark)
-    const command = `yt-dlp -g --no-warnings "${tiktokUrl}"`;
-    const { stdout, stderr } = await execAsync(command);
-    
-    if (stderr && !stderr.includes('WARNING')) {
-      throw new Error(`yt-dlp error: ${stderr}`);
-    }
-    
-    const url = stdout.trim();
-    if (!url || !url.startsWith('http')) {
-      throw new Error('Failed to extract video URL');
-    }
-    
-    return url;
-  } catch (error: any) {
-    throw new Error(`Video extraction failed: ${error.message}`);
-  }
-};
-
-// Stream video with Range request support
+// Stream video directly from yt-dlp
 const streamVideo = async (
-  videoUrl: string,
+  tiktokUrl: string,
   req: Request,
   res: Response
 ): Promise<void> => {
   return new Promise((resolve, reject) => {
-    const userAgent = getRandomUserAgent();
-    const parsedUrl = new URL(videoUrl);
-    const isHttps = parsedUrl.protocol === 'https:';
-    const client = isHttps ? https : http;
+    // Use yt-dlp to stream video directly (handles auth, headers, etc.)
+    const ytdlp = spawn('yt-dlp', [
+      '-f', 'best[ext=mp4]', // Best quality MP4
+      '--no-warnings',
+      '--no-playlist',
+      '-o', '-', // Output to stdout
+      tiktokUrl
+    ]);
     
-    // Parse Range header if present
-    const range = req.headers.range;
-    const options: any = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port || (isHttps ? 443 : 80),
-      path: parsedUrl.pathname + parsedUrl.search,
-      method: 'GET',
-      headers: {
-        'User-Agent': userAgent,
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.tiktok.com/',
-        ...(range && { Range: range })
-      }
-    };
+    // Set headers
+    const videoId = extractVideoId(tiktokUrl) || 'video';
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="tiktok-${videoId}.mp4"`);
+    res.setHeader('Accept-Ranges', 'bytes');
     
-    const proxyReq = client.request(options, (proxyRes) => {
-      // Forward status code
-      res.status(proxyRes.statusCode || 200);
-      
-      // Forward headers
-      const headers: Record<string, string> = {
-        'Content-Type': 'video/mp4',
-        'Accept-Ranges': 'bytes'
-      };
-      
-      // Forward Content-Length if available
-      if (proxyRes.headers['content-length']) {
-        headers['Content-Length'] = proxyRes.headers['content-length'];
+    // Pipe yt-dlp stdout to response
+    ytdlp.stdout.pipe(res);
+    
+    // Handle errors
+    ytdlp.stderr.on('data', (data) => {
+      const errorMsg = data.toString();
+      // Ignore warnings, but log actual errors
+      if (!errorMsg.includes('WARNING') && !errorMsg.includes('ERROR')) {
+        console.error('yt-dlp stderr:', errorMsg);
       }
-      
-      // Forward Content-Range if available (for partial content)
-      if (proxyRes.headers['content-range']) {
-        headers['Content-Range'] = proxyRes.headers['content-range'];
-        res.status(206); // Partial Content
-      }
-      
-      // Set Content-Disposition
-      const videoId = extractVideoId(req.query.url as string) || 'video';
-      headers['Content-Disposition'] = `attachment; filename="tiktok-${videoId}.mp4"`;
-      
-      // Set all headers
-      Object.entries(headers).forEach(([key, value]) => {
-        res.setHeader(key, value);
-      });
-      
-      // Pipe the response
-      proxyRes.pipe(res);
-      
-      proxyRes.on('end', () => resolve());
-      proxyRes.on('error', (err) => reject(err));
     });
     
-    proxyReq.on('error', (err) => reject(err));
-    proxyReq.end();
+    ytdlp.on('error', (err) => {
+      if (!res.headersSent) {
+        reject(new Error(`Failed to start yt-dlp: ${err.message}`));
+      }
+    });
+    
+    ytdlp.on('close', (code) => {
+      if (code !== 0 && !res.headersSent) {
+        reject(new Error(`yt-dlp exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+    
+    // Handle client disconnect
+    req.on('close', () => {
+      if (!ytdlp.killed) {
+        ytdlp.kill();
+      }
+    });
   });
 };
 
@@ -198,25 +175,14 @@ app.get('/download', rateLimiter, async (req: Request, res: Response) => {
       });
     }
     
-    // Extract direct video URL
-    let videoUrl: string;
+    // Stream video directly using yt-dlp
     try {
-      videoUrl = await extractVideoUrl(url);
-    } catch (error: any) {
-      return res.status(500).json({
-        error: 'Extraction failed',
-        message: error.message || 'Failed to extract video URL. The video might be private or unavailable.'
-      });
-    }
-    
-    // Stream video to client
-    try {
-      await streamVideo(videoUrl, req, res);
+      await streamVideo(url, req, res);
     } catch (error: any) {
       if (!res.headersSent) {
         return res.status(500).json({
-          error: 'Streaming failed',
-          message: error.message || 'Failed to stream video'
+          error: 'Download failed',
+          message: error.message || 'Failed to download video. The video might be private or unavailable.'
         });
       }
     }
