@@ -1,14 +1,20 @@
+# Force both Node.js and Python providers
+providers = ["node", "python"]
+
 [phases.setup]
-nixPkgs = ["nodejs_20", "python3", "ffmpeg"]
+# Install system packages: yt-dlp binary (fallback), ffmpeg, and ensure python/pip
+nixPkgs = ["nodejs_20", "python3", "ffmpeg", "yt-dlp"]
 
 [phases.install]
 cmds = [
-  "pip install yt-dlp",
   "npm install"
 ]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = [
+  "npm run build",
+  "pip install yt-dlp"
+]
 
 [start]
 cmd = "npm start"
