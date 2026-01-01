@@ -2,7 +2,9 @@
 
 A lightweight, production-ready REST API for downloading TikTok videos without watermarks. Built with Express.js, TypeScript, and yt-dlp. Includes an optional web interface for convenience.
 
-<img width="699" height="691" alt="image" src="https://github.com/user-attachments/assets/872a5672-bd03-42f1-b820-aefb8c0c567d" />
+<img width="753" height="892" alt="image" src="https://github.com/user-attachments/assets/3fba8aec-3aa7-4fd9-b115-8c8fa1f15ec5" />
+<img width="852" height="930" alt="image" src="https://github.com/user-attachments/assets/ed15b295-05df-4e01-af20-74a1c22e2703" />
+
 
 ## Features
 
